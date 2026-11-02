@@ -77,6 +77,10 @@ dsh plugin --profile desktop add link:<仓库绝对路径>
 
 ## 更新日志
 
+### 0.2.2
+
+- WorkBuddy 紧凑入口简化：`Credits 93% · Extra credits 100% · Free model tokens 86%` → `93% · Extra 100% · Free 86%`。弹窗仍显示上游完整窗口名。
+
 ### 0.2.1
 
 - 速度菜单视觉修正：菜单按钮显式左对齐，避免宿主按钮规则导致文字竖排错乱；触发按钮改为带边框小按钮（8px 圆角），与订阅插件一致。

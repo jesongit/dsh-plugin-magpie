@@ -139,6 +139,10 @@ export function quotaPeriod(label: string): { label: string; minutes?: number } 
   // Known vendor window names keep their canonical short form; everything unknown stays as supplied.
   if (/^夜间(?:流量)?$/.test(compact) || /^night(?:ly)?(?:[-_ ]?traffic)?$/.test(compact)) return { label: '夜间' }
   if (/^glm-5\.3-flash-trial/.test(compact)) return { label: '夜间' }
+  // WorkBuddy: the leading "Credits" noun carries no information next to its share.
+  if (/^credits?$/.test(compact)) return { label: '' }
+  if (/^extra[ _-]?credits?$/.test(compact)) return { label: 'Extra' }
+  if (/^free[ _-]?(?:model[ _-]?)?tokens?$/.test(compact)) return { label: 'Free' }
   return { label: label.trim().slice(0, 18) }
 }
 function countdown(at: number, now: number): string {
@@ -158,7 +162,7 @@ export function quotaHeadline(provider: QuotaProviderView | undefined, now = Dat
   if (percentages.length) {
     const reset = percentages.find(item => item.period.minutes !== undefined && validTime(item.window.nextResetAt))
     const time = reset ? `${countdown(reset.window.nextResetAt!, now)} | ` : ''
-    return time + percentages.map(({window,period}) => `${period.label} ${Math.round(window.remaining ?? 0)}%`).join(' · ')
+    return time + percentages.map(({window,period}) => `${period.label === '' ? '' : `${period.label} `}${Math.round(window.remaining ?? 0)}%`).join(' · ')
   }
   if (quota.balanceText || quota.windows.some(window => window.kind === 'balance')) return '余额 / 积分'
   if (quota.windows.length && quota.windows.every(window => window.kind === 'unlimited')) return '不限量'

@@ -86,6 +86,14 @@ test('compact cycle names normalize known periods without guessing unknown label
  for(const name of ['monthly','month','月','30天','1m'])assert.deepEqual(quotaPeriod(name),{label:'1m',minutes:43200})
  assert.equal(quotaPeriod('Gemini Pro').minutes,undefined)
  for(const name of ['夜间流量','夜间','Night traffic','Nightly','GLM-5.3-Flash-Trial · ZCODE GLOBAL BUILD'])assert.deepEqual(quotaPeriod(name),{label:'夜间'})
+ // WorkBuddy: redundant leading noun dropped, remaining names shortened.
+ assert.deepEqual(quotaPeriod('Credits'),{label:''})
+ assert.deepEqual(quotaPeriod('Extra credits'),{label:'Extra'})
+ assert.deepEqual(quotaPeriod('Free model tokens'),{label:'Free'})
+})
+test('WorkBuddy compact badge drops the Credits noun and shortens Extra/Free labels',()=>{
+ const p=provider(account([{kind:'percentage',label:'Credits',remaining:93},{kind:'percentage',label:'Extra credits',remaining:100},{kind:'percentage',label:'Free model tokens',remaining:86}]))
+ assert.equal(quotaHeadline(p),'93% · Extra 100% · Free 86%')
 })
 test('compact countdown selects shortest recognized period, then earliest member reset, never the whole pool reset',()=>{
  const now=1000000
