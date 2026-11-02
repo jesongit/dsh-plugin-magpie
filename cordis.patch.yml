@@ -1,0 +1,3 @@
+- insert:
+    - id: magpie-connector
+      name: dsh-plugin-magpie

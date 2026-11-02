@@ -1,0 +1,8 @@
+node_modules/
+lib/
+lib-test/
+.impeccable/review/
+*.log
+.verification/
+.env
+.env.*
