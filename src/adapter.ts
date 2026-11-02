@@ -8,6 +8,8 @@ import { abortable, chatChunks, chatError, chatRequest, sseData } from './protoc
 export interface MagpieAdapterService {
   catalog(): readonly CatalogGroup[]
   capture(provider: string, model: string): CallTarget
+  /** Session tier overrides; 'fast' maps to Codex's priority service tier when the model supports it. */
+  sessionTier(provider: string, model: string, sessionId: string | undefined): 'standard' | 'fast'
 }
 export interface MagpieAdapterOptions {
   fetch?: typeof fetch
@@ -20,7 +22,10 @@ function metadata(provider: string, model: CatalogModel): LlmResolvedModelInfo {
     ...(model.maxTokens !== undefined ? { defaultMaxTokens: model.maxTokens } : {}),
     ...(model.efforts.length ? { reasoning: {
       efforts: model.efforts.map(effort => ({ id: ReasoningEffortId(effort), name: effort })),
-      ...(model.defaultEffort !== undefined && model.efforts.includes(model.defaultEffort) ? { defaultEffort: ReasoningEffortId(model.defaultEffort) } : {}),
+      // Always declare a default: without one the host injects a "provider
+      // default" pseudo-entry into the effort picker, which the user asked to
+      // remove. The same effective-effort rule backs dispatch.
+      defaultEffort: ReasoningEffortId(model.efforts.includes('high') ? 'high' : model.efforts[0]!),
     } } : {}),
   }
 }
@@ -71,6 +76,9 @@ export class MagpieAdapter extends LlmAdapter {
     try {
       signal.throwIfAborted()
       const request = await chatRequest({ ...options, signal }, target.model, this.attachments?.())
+      // Codex's /fast rides Chat Completions' service_tier; Magpie forwards it
+      // and already falls back when an account refuses priority.
+      if (this.service.sessionTier(target.provider, target.model.id, options.sessionId) === 'fast' && target.model.fastTier) request.service_tier = 'priority'
       const url = `${target.gatewayUrl.replace(/\/+$/, '')}/v1/chat/completions`
       const headers = new Headers(attributionHeaders())
       headers.set('Authorization', `Bearer ${target.gatewayKey}`)

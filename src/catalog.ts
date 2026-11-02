@@ -47,7 +47,8 @@ export function parseCatalog(payload: unknown, names: ReadonlyMap<string, string
       groups.set(upstream, group)
     }
     const levels = Array.isArray(row.reasoning_levels) ? row.reasoning_levels : Array.isArray(row.supported_reasoning_levels) ? row.supported_reasoning_levels.map(value => object(value)?.effort) : []
-    const efforts = [...new Set(levels.filter((value): value is string => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(value)))]
+    // 'default' is a catalog artifact, not a selectable effort; DSH shows what remains.
+    const efforts = [...new Set(levels.filter((value): value is string => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(value) && value !== 'default'))]
     const model: CatalogModel = { id, name: text(row.display_name, text(row.name, id)), efforts }
     const context = positive(row.context_window) ?? positive(row.context_length) ?? positive(row.max_input_tokens)
     const maxTokens = positive(row.max_output_tokens)
@@ -56,6 +57,8 @@ export function parseCatalog(payload: unknown, names: ReadonlyMap<string, string
     if (Array.isArray(modalities?.input)) model.inputModalities = modalities.input.filter((value): value is 'text' | 'image' => value === 'text' || value === 'image')
     else if (typeof row.supports_vision === 'boolean') model.inputModalities = row.supports_vision ? ['text', 'image'] : ['text']
     if (typeof row.default_reasoning_effort === 'string' && efforts.includes(row.default_reasoning_effort)) model.defaultEffort = row.default_reasoning_effort
+    const tiers = Array.isArray(row.service_tiers) ? row.service_tiers.map(value => object(value)?.id).filter((value): value is string => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(value)) : []
+    if (tiers.includes('priority')) model.fastTier = true
     group.models.push(model)
     seen.add(id)
   }

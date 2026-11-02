@@ -4,6 +4,7 @@ import type { AdapterRegistrationHandle } from '@deepseek-ai/dsh-llm'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { MagpieService } from './service.ts'
 import { MagpieAdapter } from './adapter.ts'
+import { SpeedStore } from './speed-store.ts'
 import { registerRpc } from './rpc.ts'
 
 export const name = 'magpie-connector'
@@ -17,7 +18,10 @@ export async function apply(ctx: Context): Promise<void> {
     storePath: dshHomePath('plugins', 'magpie', 'connection.json'),
     onCatalogChanged: () => { if (!disposed) syncRoutes() }
   })
-  const adapter = new MagpieAdapter(service, () => ctx.get('attachments') as AttachmentStore | undefined)
+  const speeds = new SpeedStore(dshHomePath('plugins', 'magpie', 'speed.json'))
+  const tierOf = (provider: string, model: string, sessionId: string | undefined): 'standard' | 'fast' =>
+    sessionId !== undefined && speeds.tier(sessionId) === 'fast' ? 'fast' : 'standard'
+  const adapter = new MagpieAdapter({ catalog: () => service.catalog(), capture: (provider, model) => service.capture(provider, model), sessionTier: tierOf }, () => ctx.get('attachments') as AttachmentStore | undefined)
   function syncRoutes(): void {
     const routes = service.catalog().map(group => group.route)
     // DSH rejects an initially empty registration. Stay dormant until discovery.
@@ -27,7 +31,7 @@ export async function apply(ctx: Context): Promise<void> {
   await service.initialize()
   syncRoutes()
   ctx.effect(() => () => { disposed = true; registration?.(); service.dispose() }, 'magpie connector lifecycle')
-  registerRpc(ctx, service)
+  registerRpc(ctx, service, speeds)
 
   // One shared low-frequency directory refresh, not one timer per conversation.
   const timer = setInterval(() => {

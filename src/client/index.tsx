@@ -8,6 +8,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { MagpieClient } from './state.ts'
 import { MagpieIcon, MagpiePanel, MagpieSettings } from './components.tsx'
 import { ModelQuotaDock } from './ModelQuotaDock.tsx'
+import { SpeedSelect } from './SpeedSelect.tsx'
 import { ModelSelectionSource, createCurrentModelReader } from './model-selection.ts'
 import type { ModelDirectoriesLike } from './model-selection.ts'
 import { css } from './styles.ts'
@@ -44,5 +45,6 @@ export function apply(ctx: Context): void {
   ctx.effect(installSettingsIcon, 'magpie settings navigation icon')
   ctx.slots.inject('settings.section', () => ctx.slots.register({ name: 'settings.section', id: 'magpie', order: 91, label: 'Magpie', inject: props }, MagpieSettings))
   ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({ name: 'conversation.composer.dock', id: 'magpie-status', order: 11, inject: (sessionId: string) => ({ client, selection: selectedFor(sessionId) }) }, ModelQuotaDock))
+  ctx.slots.inject('conversation.input.right', () => ctx.slots.register({ name: 'conversation.input.right', id: 'magpie-speed', order: 2, inject: (sessionId: string) => ({ client, selection: selectedFor(sessionId), sessionId }) }, SpeedSelect))
   void client.read()
 }

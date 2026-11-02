@@ -1,5 +1,4 @@
-/** Provider-neutral DSH messages ↔ OpenAI Chat Completions. No vendor auth/routing logic. */
-import { Buffer } from 'node:buffer'
+/** Provider-neutral DSH messages ↔ OpenAI Chat Completions. No vendor auth/routing logic. */import { Buffer } from 'node:buffer'
 import {
   LlmError, ToolCallId, fileHandleText, offloadedImageText, projectToolUpdates,
   requestImageHandleText, textOnlyImageText, isContextWindowExceededError, isQuotaExceededError,
@@ -11,6 +10,21 @@ import type { CatalogModel } from './contracts.js'
 type ObjectValue = Record<string, unknown>
 const object = (value: unknown): ObjectValue => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as ObjectValue : {}
 const count = (value: unknown): number | undefined => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+
+/**
+ * Effective reasoning effort: the session's pick, else 'high', else the first
+ * advertised effort. 'default' never reaches dispatch (filtered from catalog)
+ * and a model with no efforts sends no field at all.
+ */
+export function effectiveEffort(options: GenerateOptions, model: CatalogModel): string | undefined {
+  if (options.reasoningEffort !== undefined) {
+    if (!model.efforts.includes(options.reasoningEffort)) throw new LlmError('This Magpie model does not advertise the selected reasoning effort', 'INVALID_REQUEST')
+    return options.reasoningEffort
+  }
+  if (!model.efforts.length) return undefined
+  if (model.efforts.includes('high')) return 'high'
+  return model.efforts[0]
+}
 
 /** Race even a backend that does not observe AbortSignal; always remove the listener. */
 export async function abortable<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -28,9 +42,7 @@ export async function abortable<T>(pending: Promise<T>, signal?: AbortSignal): P
 
 /** Serialize all history including raw tool arguments; files are handles, never uploaded. */
 export async function chatRequest(options: GenerateOptions, model: CatalogModel, attachments?: AttachmentStore): Promise<ObjectValue> {
-  if (options.reasoningEffort !== undefined && !model.efforts.includes(options.reasoningEffort)) {
-    throw new LlmError('This Magpie model does not advertise the selected reasoning effort', 'INVALID_REQUEST')
-  }
+  const effort = effectiveEffort(options, model)
   const projected = projectToolUpdates(options.messages, options.tools, undefined, options.toolHistory)
   const messages: ObjectValue[] = []
   if (options.system !== undefined && options.system !== '') messages.push({ role: 'system', content: options.system })
@@ -88,7 +100,7 @@ export async function chatRequest(options: GenerateOptions, model: CatalogModel,
     } })) } : {}),
     ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
     ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : model.maxTokens !== undefined ? { max_tokens: model.maxTokens } : {}),
-    ...(options.reasoningEffort !== undefined ? { reasoning_effort: options.reasoningEffort } : model.defaultEffort !== undefined && model.efforts.includes(model.defaultEffort) ? { reasoning_effort: model.defaultEffort } : {}),
+    ...(effort !== undefined ? { reasoning_effort: effort } : {}),
     ...(options.stop !== undefined ? { stop: options.stop } : {}),
   }
 }

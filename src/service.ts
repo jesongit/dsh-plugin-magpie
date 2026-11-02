@@ -107,6 +107,10 @@ export class MagpieService {
     return { url: connection.url, loginKey: connection.loginKey, revision: this.connectionRevision }
   }
   catalog(): readonly CatalogGroup[] { return structuredClone(this.connection?.catalog ?? []) }
+  /** True when the exact model advertises Codex's priority service tier. */
+  supportsFastTier(provider: string, model: string): boolean {
+    return this.connection?.catalog.find(group => group.route === provider)?.models.find(entry => entry.id === model)?.fastTier === true
+  }
   capture(provider: string, model: string): CallTarget {
     this.assertLive()
     const connection = this.connection

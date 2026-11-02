@@ -2,9 +2,22 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { HostConnectionHandle } from '@deepseek-ai/dsh-client-connection'
 import type { ConnectInput } from './contracts.ts'
 import type { MagpieService } from './service.ts'
+import type { SpeedStore } from './speed-store.ts'
 import { LaunchTickets } from './launch.ts'
 
-export const ENDPOINTS = ['status', 'connect', 'refresh', 'disconnect', 'quotas', 'launch.issue', 'launch.redeem', 'launch.revoke'] as const
+export interface SpeedView { tier: 'standard' | 'fast'; visible: boolean }
+function sessionId(payload: unknown): string {
+  const value = (payload as Record<string, unknown> | null)?.sessionId
+  if (typeof value !== 'string' || value.length === 0 || value.length > 256) throw new Error('Invalid speed request')
+  return value
+}
+function speedTier(payload: unknown): 'standard' | 'fast' {
+  const value = (payload as Record<string, unknown> | null)?.tier
+  if (value !== 'standard' && value !== 'fast') throw new Error('Invalid speed request')
+  return value
+}
+
+export const ENDPOINTS = ['status', 'connect', 'refresh', 'disconnect', 'quotas', 'speed', 'setSpeed', 'launch.issue', 'launch.redeem', 'launch.revoke'] as const
 export type Endpoint = typeof ENDPOINTS[number]
 
 export function readConnectInput(value: unknown): ConnectInput {
@@ -25,7 +38,7 @@ function launchToken(payload: unknown): string {
   return token
 }
 
-export async function dispatch(service: MagpieService, endpoint: Endpoint, payload: unknown, signal: AbortSignal, tickets?: LaunchTickets): Promise<unknown> {
+export async function dispatch(service: MagpieService, endpoint: Endpoint, payload: unknown, signal: AbortSignal, tickets?: LaunchTickets, speeds?: SpeedStore): Promise<unknown> {
   signal.throwIfAborted()
   switch (endpoint) {
     case 'status': return service.status()
@@ -33,6 +46,19 @@ export async function dispatch(service: MagpieService, endpoint: Endpoint, paylo
     case 'refresh': return service.refresh(signal)
     case 'disconnect': return service.disconnect()
     case 'quotas': return service.quotas(signal)
+    case 'speed': {
+      if (!speeds) throw new Error('Speed unavailable')
+      const session = sessionId(payload)
+      const provider = typeof (payload as Record<string, unknown>).provider === 'string' ? String((payload as Record<string, unknown>).provider) : ''
+      const model = typeof (payload as Record<string, unknown>).model === 'string' ? String((payload as Record<string, unknown>).model) : ''
+      const visible = provider.length > 0 && model.length > 0 && service.supportsFastTier(provider, model)
+      return { tier: speeds.tier(session), visible, fastTier: visible }
+    }
+    case 'setSpeed': {
+      if (!speeds) throw new Error('Speed unavailable')
+      speeds.set(sessionId(payload), speedTier(payload))
+      return {}
+    }
     case 'launch.issue': {
       if (!tickets) throw new Error('Launch unavailable')
       return tickets.issue()
@@ -50,7 +76,7 @@ export async function dispatch(service: MagpieService, endpoint: Endpoint, paylo
 }
 
 /** Exact Fetch registrations inherit DSH's owner authentication and origin fence. */
-export function registerRpc(ctx: Context, service: MagpieService): void {
+export function registerRpc(ctx: Context, service: MagpieService, speeds?: SpeedStore): void {
   ctx.inject(['connection'], ctx => {
     const connection = ctx.get('connection') as HostConnectionHandle
     const tickets = new LaunchTickets({ capture: () => service.launchIdentity() })
@@ -63,7 +89,7 @@ export function registerRpc(ctx: Context, service: MagpieService): void {
         try { body = await request.json() as Record<string, unknown> } catch { return new Response(null, { status: 400, headers: { 'Cache-Control': 'no-store' } }) }
         if (!body || body.type !== 'client-request' || typeof body.rpcId !== 'string' || body.method !== `magpie.${endpoint}`) return new Response(null, { status: 400, headers: { 'Cache-Control': 'no-store' } })
         let result: unknown
-        try { result = { ok: true, value: await dispatch(service, endpoint, body.payload, request.signal, tickets) } }
+        try { result = { ok: true, value: await dispatch(service, endpoint, body.payload, request.signal, tickets, speeds) } }
         catch {
           // Never echo upstream request errors, typed secrets, URLs or cookie contents.
           result = { ok: false, error: { code: 'magpie/operation-failed', message: endpoint.startsWith('launch.') ? 'Magpie 后台启动未完成，请检查连接设置后重试。' : service.status().error ?? 'Magpie 操作未完成，请检查连接设置后重试。', details: {} } }

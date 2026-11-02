@@ -1,25 +1,60 @@
 {
   "name": "dsh-plugin-magpie",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Lightweight Magpie connector for DSH: provider-grouped models, one-time-ticket native management panel and per-model quota popup",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "exports": {
-    ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" },
-    "./client": { "types": "./lib/client/index.d.ts", "default": "./lib/client.js" },
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
     "./package.json": "./package.json"
   },
-  "files": ["lib", "cordis.patch.yml", "README.md", "LICENSE", "THIRD-PARTY-NOTICES"],
-  "repository": { "type": "git", "url": "git+https://github.com/jesongit/dsh-plugin-magpie.git" },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jesongit/dsh-plugin-magpie.git"
+  },
   "homepage": "https://github.com/jesongit/dsh-plugin-magpie#readme",
   "bugs": "https://github.com/jesongit/dsh-plugin-magpie/issues",
-  "keywords": ["dsh", "dsh-plugin", "magpie", "connector", "model-provider"],
-  "engines": { "node": ">=22" },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "magpie",
+    "connector",
+    "model-provider"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
-    "client": { "platform": "web", "inject": ["@deepseek-ai/dsh-client-ui-renderer", "@deepseek-ai/dsh-client-ui-settings", "@deepseek-ai/dsh-client-ui-sidebar", "@deepseek-ai/dsh-client-ui-layout", "@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-locale"] }
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
   },
   "scripts": {
     "build": "tsc && tsdown",

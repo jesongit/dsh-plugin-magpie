@@ -18,7 +18,7 @@ function setup(fetcher: typeof fetch, resolveAttachments?: () => AttachmentStore
   const service = { catalog: () => [group, { ...group, route: 'magpie-codex', name: 'Codex' }], capture: (provider: string, id: string) => {
     if (provider !== group.route || id !== model.id) throw new LlmError('Missing model', 'NO_ADAPTER')
     return target
-  } }
+  }, sessionTier: () => 'standard' as const }
   return { adapter: new MagpieAdapter(service, { fetch: fetcher, ...(resolveAttachments ? { resolveAttachments } : {}) }),
     target: () => target, replace: () => { target = { ...target, gatewayUrl: 'http://new.test', gatewayKey: 'NEW', model: { ...target.model, name: 'New' } } } }
 }
@@ -38,7 +38,12 @@ test('one adapter lists every group and exposes branded reasoning, context and o
   assert.equal(info.context?.contextWindow, 10000)
   assert.equal(info.defaultMaxTokens, 1000)
   assert.equal(info.reasoning?.efforts[1]?.id, ReasoningEffortId('high'))
-  assert.equal(info.reasoning?.defaultEffort, ReasoningEffortId('low'))
+  assert.equal(info.reasoning?.defaultEffort, ReasoningEffortId('high'))
+  assert.equal(info.reasoning?.efforts.every(effort => effort.id !== ReasoningEffortId('default')), true)
+  // A model without 'high' always still declares its first effort as default.
+  const lowOnly = await (async () => { const { adapter: fallback } = setup(mocked(async () => ok())); return fallback })()
+  const fallbackInfo = await lowOnly.resolveModel(group.route, model.id)
+  assert.equal(fallbackInfo.reasoning?.defaultEffort, ReasoningEffortId('high'))
   assert.notEqual(info.inputModalities, group.models[0]?.inputModalities) // detached snapshots
 })
 
@@ -57,7 +62,7 @@ test('prepared calls freeze endpoint, key and metadata; full model ids and attri
   assert.equal(sent[0]?.headers.get('x-magpie-account'), null)
   for (const [name, value] of Object.entries(attributionHeaders())) assert.equal(sent[0]?.headers.get(name), value)
   assert.equal(sent[0]?.body.model, model.id)
-  assert.equal(sent[0]?.body.reasoning_effort, 'low')
+  assert.equal(sent[0]?.body.reasoning_effort, 'high')
   await collect(s.adapter.stream(options()))
   assert.equal(sent[1]?.url, 'http://new.test/v1/chat/completions')
   await assert.rejects(() => collect(prepared.stream({ ...options(), model: 'other' })), { code: 'INVALID_PREPARED_CALL' })
@@ -139,10 +144,10 @@ test('stream translates reasoning/text, interleaved fragmented tool calls and us
   assert.deepEqual(blocks.slice(2), [{ type: 'tool-call', id: 'b', name: 'two', arguments: '{}' }, { type: 'tool-call', id: 'a', name: 'one', arguments: '{"x":1}' }])
   assert.deepEqual(chunks.find(chunk => chunk.type === 'usage'), { type: 'usage', usage: { inputTokens: 70, outputTokens: 20, cacheReadTokens: 30, reasoningTokens: 5, totalTokens: 120 } })
 })
-test('unadvertised reasoning effort fails before request; stale default effort is not sent', async () => {
+test('unadvertised reasoning effort fails before request; stale default effort falls back to high', async () => {
   await assert.rejects(() => chatRequest({ ...options(), reasoningEffort: ReasoningEffortId('impossible') }, model), { code: 'INVALID_REQUEST' })
   const body = await chatRequest(options(), { ...model, defaultEffort: 'stale' })
-  assert.equal(body.reasoning_effort, undefined)
+  assert.equal(body.reasoning_effort, 'high')
 })
 test('cache input counters are disjoint; impossible cache/total facts are not advertised', () => {
   assert.deepEqual(chatUsage({ prompt_tokens: 100, completion_tokens: 10, prompt_cache_hit_tokens: 20, cache_creation_input_tokens: 5 }),

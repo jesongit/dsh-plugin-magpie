@@ -69,5 +69,8 @@ export class MagpieClient {
   launchIssue = (signal?: AbortSignal): Promise<{ token: string; expiresAt: number }> => this.call('launch.issue', {}, signal)
   launchRedeem = (token: string, signal?: AbortSignal): Promise<{ url: string; body: string }> => this.call('launch.redeem', { token }, signal)
   launchRevoke = async (token: string): Promise<void> => { await this.call('launch.revoke', { token }) }
+  speed = (sessionId: string, provider: string, model: string): Promise<{ tier: 'standard' | 'fast'; visible: boolean; fastTier: boolean }> =>
+    this.call('speed', { sessionId, provider, model })
+  setSpeed = (sessionId: string, tier: 'standard' | 'fast'): Promise<void> => this.call('setSpeed', { sessionId, tier })
   dispose(): void { this.disposed = true; this.listeners.clear() }
 }

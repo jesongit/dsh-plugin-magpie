@@ -15,6 +15,8 @@ export interface CatalogModel {
   inputModalities?: ('text' | 'image')[]
   efforts: string[]
   defaultEffort?: string
+  /** The upstream catalog advertises Codex's priority service tier for this model. */
+  fastTier?: boolean
 }
 export interface CatalogGroup {
   /** Namespaced DSH route; never collides with Codex/WorkBuddy direct plugins. */
