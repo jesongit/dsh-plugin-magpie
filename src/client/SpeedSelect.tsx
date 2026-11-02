@@ -60,8 +60,8 @@ export function SpeedSelect({ client, selection, sessionId }: SpeedSelectProps) 
       {state.tier === 'fast' ? '快速' : '标准'}
     </button>
     {open && <div className="mp-speed-menu" role="menu" aria-label="Magpie 速度">
-      <button type="button" role="menuitemradio" aria-checked={state.tier === 'standard'} disabled={busy} onClick={() => choose('standard')}><span className="mp-speed-check">{state.tier === 'standard' ? '✓' : ''}</span><span className="mp-speed-item"><span className="mp-speed-name">标准</span><span className="mp-speed-desc">默认速度</span></span></button>
-      <button type="button" role="menuitemradio" aria-checked={state.tier === 'fast'} disabled={busy} onClick={() => choose('fast')}><span className="mp-speed-check">{state.tier === 'fast' ? '✓' : ''}</span><span className="mp-speed-item"><span className="mp-speed-name">快速</span><span className="mp-speed-desc">约 1.5 倍速度，消耗更多用量</span></span></button>
+      <button type="button" role="menuitemradio" aria-checked={state.tier === 'standard'} disabled={busy} onClick={() => choose('standard')}><span className="mp-speed-item"><span className="mp-speed-name">标准</span><span className="mp-speed-desc">默认速度</span></span>{state.tier === 'standard' && <span className="mp-speed-check" aria-hidden="true">✓</span>}</button>
+      <button type="button" role="menuitemradio" aria-checked={state.tier === 'fast'} disabled={busy} onClick={() => choose('fast')}><span className="mp-speed-item"><span className="mp-speed-name">快速</span><span className="mp-speed-desc">约 1.5 倍速度，消耗更多用量</span></span>{state.tier === 'fast' && <span className="mp-speed-check" aria-hidden="true">✓</span>}</button>
     </div>}
   </span>
 }
