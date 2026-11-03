@@ -2,6 +2,8 @@
 export interface NativeBridge {
   acquire(storageKey: string): Promise<{ lease: string; partition: string }>
   release(lease: string): Promise<void>
+  /** The host's lease-scoped notice that the guest asked to open a link in a new window. */
+  onOpenRequested?(lease: string, listener: (url: string) => void): (() => void) | void
 }
 export interface NativeWebview {
   setAttribute(name: string, value: string): void
@@ -24,6 +26,8 @@ export interface NativeViewOptions {
   onState: (state: NativeState) => void
   bridge?: NativeBridge
   createElement?: () => NativeWebview
+  /** Open a user-clicked external link; the host routes https/http to the system browser. */
+  openExternal?: (url: string) => void
 }
 /** Only the versioned desktop capability, never guessed IPC or custom guest configuration. */
 export function nativeBridge(): NativeBridge | undefined {
@@ -52,6 +56,7 @@ export function mountNativeView(host: HTMLElement, client: NativeLaunchClient, o
   let ended = false
   let timeout: ReturnType<typeof setTimeout> | undefined
   let lastPhase: NativeState['phase'] | undefined
+  let stopLinks: (() => void) | undefined
   const listeners: [string, EventListener][] = []
   let checkpoint = '创建网页容器'
   function state(phase: NativeState['phase'], error: string | null = null): void {
@@ -65,11 +70,24 @@ export function mountNativeView(host: HTMLElement, client: NativeLaunchClient, o
   function release(id: string): void {
     try { void bridge?.release(id).catch(() => {}) } catch { /* host owns guest destruction */ }
   }
+  /** Only a plain http(s) address without credentials may leave the managed guest. */
+  function externalUrl(value: string | undefined): string | undefined {
+    try {
+      const url = new URL(value ?? '')
+      return url.protocol === 'http:' || url.protocol === 'https:'
+        ? url.username === '' && url.password === '' ? url.href : undefined
+        : undefined
+    } catch { return undefined }
+  }
+  function openExternal(value: string): void {
+    try { options.openExternal?.(value) } catch { /* host policy may refuse; the guest stays put */ }
+  }
   function cleanup(): void {
     if (ended) return
     ended = true
     if (timeout !== undefined) { clearTimeout(timeout); timeout = undefined }
     lifetime.abort()
+    if (stopLinks !== undefined) { const stop = stopLinks; stopLinks = undefined; try { stop() } catch { /* owner already gone */ } }
     if (ticket !== undefined) { const value = ticket; ticket = undefined; revoke(value) }
     const element = guest
     guest = undefined
@@ -181,11 +199,25 @@ export function mountNativeView(host: HTMLElement, client: NativeLaunchClient, o
       if (ended) { release(reservation.lease); return }
       lease = reservation.lease
       if (!lease || !reservation.partition) throw new Error('invalid reservation')
+      // New-window links in the original page: the host denies them inside the
+      // guest and asks the owning window instead. Open them in the system
+      // browser; nothing is loaded in the background and the panel keeps state.
+      if (typeof bridge.onOpenRequested === 'function') {
+        const leaseId = lease
+        try {
+          const stop = bridge.onOpenRequested(leaseId, url => { const href = externalUrl(url); if (href) openExternal(href) })
+          if (typeof stop === 'function') stopLinks = stop
+        } catch { /* older host bridge: links keep the host default */ }
+      }
       guest = options.createElement?.() ?? document.createElement('webview') as unknown as NativeWebview
       blank = `about:blank#${lease}`
       guest.setAttribute('name', lease)
       guest.setAttribute('partition', reservation.partition)
       guest.setAttribute('src', blank)
+      // The guest's window.open only reaches the host's new-window handler when
+      // popups are enabled; the host still denies every popup and merely reports
+      // the URL to us. Without this attribute a link click is silently dropped.
+      guest.setAttribute('allowpopups', '')
       guest.setAttribute('aria-label', 'Magpie 原版管理后台')
       guest.setAttribute('style', 'display:flex;width:100%;height:100%;min-height:0;flex:1')
       listen('dom-ready', () => {
@@ -219,7 +251,19 @@ export function mountNativeView(host: HTMLElement, client: NativeLaunchClient, o
           if (stage === 'bootstrap' && bootstrapDomReady) void authenticate()
           return
         }
-        if (!validPage(url)) { fail('Magpie 后台跳转到非预期地址，已停止加载。'); return }
+        if (!validPage(url)) {
+          // A same-tab click on an outside link navigated the already loaded
+          // backend away. Send it to the system browser and bring the panel back
+          // to the management root; the initial root commitment stays strict.
+          const href = committed ? externalUrl(url.href) : undefined
+          if (href !== undefined && url.origin !== expectedOrigin) {
+            openExternal(href)
+            checkpoint = '返回后台首页'
+            void guest!.loadURL(rootUrl).catch(() => { if (!ended) fail('Magpie 后台加载失败，请检查网络后重新加载。') })
+            return
+          }
+          fail('Magpie 后台跳转到非预期地址，已停止加载。'); return
+        }
         // Only the first root commitment gates readiness. Later in-app navigations
         // (a 404 page, a transient 502, a 304 revalidation) are the original
         // backend's own state and must not tear down the retained container.

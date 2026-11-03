@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-magpie",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Lightweight Magpie connector for DSH: provider-grouped models, one-time-ticket native management panel and per-model quota popup",
   "license": "MIT",
   "type": "module",

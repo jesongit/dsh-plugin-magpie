@@ -16,7 +16,10 @@ export function NativeManagement({ client, url }: { client: MagpieClient; url: s
     setFailure(null)
     return mountNativeView(host.current, client, {
       managementUrl: url, storageKey: `${partitionScope}:${url}`, bridge,
-      onState: state => { if (state.phase === 'error') setFailure(state.error) }
+      onState: state => { if (state.phase === 'error') setFailure(state.error) },
+      // The host's main-window window-open policy sends http(s) to the system
+      // browser and denies new windows, so a link click costs no extra webview.
+      openExternal: target => { try { window.open(target, '_blank', 'noopener') } catch { /* host policy refuses */ } }
     })
   }, [client, url, bridge, revision])
   if (!bridge) return <div className="mp-body"><p role="status">请在 DSH 桌面窗口打开 Magpie 后台。</p></div>

@@ -24,7 +24,7 @@ class FakeView implements NativeWebview {
   emit(name:string,fields:Record<string,unknown>={}){const event=Object.assign(new Event(name),fields);for(const listener of [...this.listeners.get(name)??[]])listener(event)}
   listenerCount(){return [...this.listeners.values()].reduce((sum,set)=>sum+set.size,0)}
 }
-function setup(patch:{bridge?:NativeBridge;client?:Partial<NativeLaunchClient>;managementUrl?:string;view?:FakeView}={}){
+function setup(patch:{bridge?:NativeBridge;client?:Partial<NativeLaunchClient>;managementUrl?:string;view?:FakeView;openExternal?:(url:string)=>void}={}){
  const view=patch.view??new FakeView();const appended:unknown[]=[];const states:NativeState[]=[];const acquisitions:string[]=[];const releases:string[]=[];const revoked:string[]=[];const calls:string[]=[]
  const client:NativeLaunchClient={
   launchIssue:async signal=>{assert.equal(signal?.aborted,false);calls.push('issue');return{token:'opaque-test-ticket',expiresAt:Date.now()+30000}},
@@ -33,7 +33,7 @@ function setup(patch:{bridge?:NativeBridge;client?:Partial<NativeLaunchClient>;m
  }
  const bridge=patch.bridge??{acquire:async(key:string)=>{acquisitions.push(key);return{lease:'test-lease',partition:'test-isolated-partition'}},release:async(id:string)=>{releases.push(id)}}
  const host={appendChild:(node:unknown)=>{appended.push(node)}} as unknown as HTMLElement
- const dispose=mountNativeView(host,client,{bridge,managementUrl:patch.managementUrl??'https://magpie.test',storageKey:'magpie-only-plugin-isolation',onState:state=>states.push(state),createElement:()=>view})
+ const dispose=mountNativeView(host,client,{bridge,managementUrl:patch.managementUrl??'https://magpie.test',storageKey:'magpie-only-plugin-isolation',onState:state=>states.push(state),createElement:()=>view,...patch.openExternal===undefined?{}:{openExternal:patch.openExternal}})
  return{view,appended,states,acquisitions,releases,revoked,calls,dispose}
 }
 async function signin(f:ReturnType<typeof setup>,status=401){await tick();f.view.emit('dom-ready');await tick();assert.deepEqual(f.view.loads,['https://magpie.test/']);f.view.url=f.view.loads[0]!;f.view.emit('did-navigate',{url:f.view.url,httpResponseCode:status});f.view.emit('dom-ready');await tick()}
@@ -174,6 +174,32 @@ test('startup timeout covers acquisition, issue, redeem and script, while ready 
  const scheduled=new Set<()=>void>();t.mock.method(globalThis,'setTimeout',((callback:()=>void,delay:number)=>{assert.equal(delay,30000);scheduled.add(callback);return callback})as unknown as typeof setTimeout);t.mock.method(globalThis,'clearTimeout',((id:()=>void)=>{scheduled.delete(id)})as unknown as typeof clearTimeout)
  const f=setup();await tick();assert.equal(scheduled.size,1);for(const callback of[...scheduled])callback();assert.equal(f.states.at(-1)?.phase,'error');assert.deepEqual(f.releases,['test-lease']);assert.equal(scheduled.size,0);assert.equal(f.view.listenerCount(),0)
  const g=setup();await submitted(g);commit(g.view);g.view.emit('did-stop-loading');assert.equal(g.states.at(-1)?.phase,'ready');assert.equal(scheduled.size,0);g.dispose()
+})
+test('new-window links open in the system browser and never load inside the guest',async()=>{
+ const opened:string[]=[];let stopped=0;let deliver:(url:string)=>void=()=>{}
+ const f=setup({bridge:{acquire:async()=>({lease:'link-lease',partition:'link-partition'}),release:async()=>{},onOpenRequested:(_lease,listener)=>{deliver=listener;return()=>{stopped++}}},openExternal:url=>opened.push(url)})
+ await submitted(f);commit(f.view);f.view.emit('did-stop-loading');assert.equal(f.states.at(-1)?.phase,'ready')
+ // Without allowpopups the guest drops window.open before the host can report it.
+ assert.equal(f.view.attributes.get('allowpopups'),'')
+ const loadsBefore=f.view.loads.length
+ deliver('https://github.com/yetone/magpie/blob/main/README.md')
+ assert.deepEqual(opened,['https://github.com/yetone/magpie/blob/main/README.md'])
+ assert.equal(f.view.loads.length,loadsBefore)
+ for(const unsafe of['javascript:alert(1)','file:///etc/passwd','https://user:pass@github.com/x','not a url'])deliver(unsafe)
+ assert.equal(opened.length,1)
+ f.dispose();assert.equal(stopped,1)
+})
+test('a same-tab outside link opens externally and restores the management root',async()=>{
+ const opened:string[]=[]
+ const f=setup({openExternal:url=>opened.push(url)})
+ await submitted(f);commit(f.view);f.view.emit('did-stop-loading');assert.equal(f.states.at(-1)?.phase,'ready')
+ const loadsBefore=f.view.loads.length
+ f.view.emit('did-navigate',{isMainFrame:true,url:'https://github.com/yetone/magpie',httpResponseCode:200})
+ assert.deepEqual(opened,['https://github.com/yetone/magpie'])
+ assert.equal(f.view.loads.length,loadsBefore+1)
+ assert.equal(f.view.loads.at(-1),'https://magpie.test/')
+ assert.notEqual(f.states.at(-1)?.phase,'error')
+ f.dispose()
 })
 test('creation failure releases lease, invalid configuration never acquires, expired token never redeems',async()=>{
  const releases:string[]=[];const states:NativeState[]=[];mountNativeView({appendChild(){}}as unknown as HTMLElement,{}as NativeLaunchClient,{managementUrl:'https://magpie.test',storageKey:'plugin-only',onState:state=>states.push(state),bridge:{acquire:async()=>({lease:'owned',partition:'isolated'}),release:async id=>{releases.push(id)}},createElement:()=>{throw new Error('secret')}});await tick();assert.deepEqual(releases,['owned']);assert.equal(states.at(-1)?.phase,'error');assert.equal(JSON.stringify(states).includes('secret'),false)
