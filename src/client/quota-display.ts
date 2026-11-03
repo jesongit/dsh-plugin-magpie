@@ -94,6 +94,10 @@ export function aggregateQuota(provider: QuotaProviderView | undefined): Aggrega
         base.remaining = shares.reduce((sum, value) => sum + value, 0) / shares.length
         base.used = 100 - base.remaining
         base.aggregation = 'mean'
+        // A uniform reported limit is retained for weighted merging; differing ones are never invented.
+        const limits = windows.map(window => finite(window.limit) && window.limit > 0 ? window.limit : undefined)
+        const uniform = limits[0]
+        if (uniform !== undefined && limits.every(value => value === uniform)) base.limit = uniform
         if (shares.length !== windows.length) result.stale = true
       }
     } else if (first.kind === 'balance') {
@@ -124,49 +128,100 @@ export function aggregateWindowValue(window: AggregatedWindow): string {
   return windowValue(window)
 }
 function number(value: number): string { return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(value) }
-/** Canonical short cycle plus duration for ordering; unknown names retain their short label. */
-export function quotaPeriod(label: string): { label: string; minutes?: number } {
-  const value = label.trim().toLowerCase()
-  const compact = value.replace(/\s+/g, '')
-  if (/^(?:weekly|week|1w|1week|7d|7days?|7天|每周|周)$/.test(compact)) return { label: '1w', minutes: 7 * 24 * 60 }
-  if (/^(?:monthly|month|1m|1month|30d|30days?|30天|每月|月|1个月)$/.test(compact)) return { label: '1m', minutes: 30 * 24 * 60 }
-  const hours = /^(\d+(?:\.\d+)?)(?:h|hours?|小时|小時)$/.exec(compact)
-  if (hours && +hours[1]! > 0) return { label: `${+hours[1]!}h`, minutes: +hours[1]! * 60 }
-  const days = /^(\d+(?:\.\d+)?)(?:d|days?|天|日)$/.exec(compact)
-  if (days && +days[1]! > 0) return { label: `${+days[1]!}d`, minutes: +days[1]! * 24 * 60 }
-  const weeks = /^(\d+(?:\.\d+)?)(?:w|weeks?|周|週)$/.exec(compact)
-  if (weeks && +weeks[1]! > 0) return { label: `${+weeks[1]!}w`, minutes: +weeks[1]! * 7 * 24 * 60 }
-  // Known vendor window names keep their canonical short form; everything unknown stays as supplied.
-  if (/^夜间(?:流量)?$/.test(compact) || /^night(?:ly)?(?:[-_ ]?traffic)?$/.test(compact)) return { label: '夜间' }
-  if (/^glm-5\.3-flash-trial/.test(compact)) return { label: '夜间' }
-  // WorkBuddy: the leading "Credits" noun carries no information next to its share.
-  if (/^credits?$/.test(compact)) return { label: '' }
-  if (/^extra[ _-]?credits?$/.test(compact)) return { label: 'Extra' }
-  if (/^free[ _-]?(?:model[ _-]?)?tokens?$/.test(compact)) return { label: 'Free' }
-  return { label: label.trim().slice(0, 18) }
-}
-function countdown(at: number, now: number): string {
-  if (at <= now) return '0m'
+/** Countdown keeps the two largest units and ceils upward whenever a remainder exists. */
+export function countdownLabel(at: number, now: number): string {
+  if (!Number.isFinite(at) || at <= now) return '0m'
   const minutes = Math.ceil((at - now) / 60_000)
-  if (minutes < 60) return `${minutes}m`
-  const hours = Math.floor(minutes / 60)
-  return hours < 24 ? `${hours}h${minutes % 60}m` : `${Math.floor(hours / 24)}d${hours % 24}h`
+  const days = Math.floor(minutes / 1440)
+  const hours = Math.floor((minutes % 1440) / 60)
+  const rest = minutes % 60
+  if (days > 0) {
+    const carried = hours + (rest > 0 ? 1 : 0)
+    return carried >= 24 ? `${days + 1}d0h` : `${days}d${carried}h`
+  }
+  return hours > 0 ? `${hours}h${rest}m` : `${rest}m`
+}
+/** Compact magnitude: 62.4k, 0.9k, 46.7M, 12.5; below the suffix thresholds stay exact. */
+export function compactCount(value: number): string {
+  if (!Number.isFinite(value)) return '0'
+  const abs = Math.abs(value)
+  const scale = abs >= 1e9 ? [1e9, 'B'] as const : abs >= 1e6 ? [1e6, 'M'] as const : abs >= 1000 ? [1000, 'k'] as const : [1, ''] as const
+  return compactScaled(value, scale[0]) + scale[1]
+}
+function compactScaled(value: number, divisor: number): string {
+  let text = (value / divisor).toPrecision(3)
+  if (text.includes('.')) text = text.replace(/0+$/, '').replace(/\.$/, '')
+  return text
+}
+const BALANCE_TEXT = /^([0-9][\d,]*(?:\.[0-9]+)?)\s*(\S.*)$/
+/** A balance like "62440.54 credits" becomes "62.4k credits"; anything unparsable stays hidden. */
+export function compactBalance(value: string): string | undefined {
+  const match = BALANCE_TEXT.exec(value.trim())
+  if (!match) return undefined
+  const amount = Number(match[1]!.replace(/,/g, ''))
+  if (!Number.isFinite(amount)) return undefined
+  const unit = match[2]!.trim()
+  return unit ? `${compactCount(amount)} ${unit}` : compactCount(amount)
+}
+const effectiveReset = (window: AggregatedWindow): number | undefined =>
+  validTime(window.resetsAt) ? window.resetsAt : validTime(window.nextResetAt) ? window.nextResetAt : undefined
+/** Permanent windows merge into one figure: summed amounts, else limit-weighted share, else mean share. */
+function permanentLabel(windows: AggregatedWindow[]): string | undefined {
+  if (!windows.length) return undefined
+  const used = (window: AggregatedWindow): number | undefined =>
+    finite(window.used) ? window.used : finite(window.remaining) ? 100 - window.remaining : undefined
+  if (windows.every(window => finite(window.amount) && window.amount >= 0 && finite(window.limit) && window.limit > 0)) {
+    const amount = windows.reduce((sum, window) => sum + window.amount!, 0)
+    const limit = windows.reduce((sum, window) => sum + window.limit!, 0)
+    if (limit > 0) {
+      // One shared scale keeps the pair comparable: 900/1400 reads 0.9k/1.4k.
+      const peak = Math.max(amount, limit)
+      const divisor = peak >= 1e9 ? 1e9 : peak >= 1e6 ? 1e6 : peak >= 1000 ? 1000 : 1
+      const suffix = divisor === 1 ? '' : divisor === 1e9 ? 'B' : divisor === 1e6 ? 'M' : 'k'
+      return `${compactScaled(amount, divisor)}${suffix}/${compactScaled(limit, divisor)}${suffix}`
+    }
+  }
+  if (windows.every(window => finite(window.limit) && window.limit > 0 && used(window) !== undefined)) {
+    const total = windows.reduce((sum, window) => sum + window.limit!, 0)
+    if (total > 0) {
+      const spent = windows.reduce((sum, window) => sum + used(window)! * window.limit!, 0)
+      return `${Math.round(Math.max(0, Math.min(100, 100 - spent / total)))}%`
+    }
+  }
+  const shares = windows.map(window => share(window)).filter(finite)
+  return shares.length === windows.length ? `${Math.round(shares.reduce((sum, value) => sum + value, 0) / shares.length)}%` : undefined
 }
 export function quotaHeadline(provider: QuotaProviderView | undefined, now = Date.now()): string {
   const quota = aggregateQuota(provider)
   if (!provider || !provider.accounts.length) return '暂无额度读数'
   if (!quota.eligible) return '额度暂不可用'
-  const percentages = quota.windows.filter(window => window.kind === 'percentage')
-    .map((window, index) => ({ window, index, period: quotaPeriod(window.label) }))
-    .sort((a, b) => (a.period.minutes ?? Infinity) - (b.period.minutes ?? Infinity) || a.index - b.index)
-  if (percentages.length) {
-    const reset = percentages.find(item => item.period.minutes !== undefined && validTime(item.window.nextResetAt))
-    const time = reset ? `${countdown(reset.window.nextResetAt!, now)} | ` : ''
-    return time + percentages.map(({window,period}) => `${period.label === '' ? '' : `${period.label} `}${Math.round(window.remaining ?? 0)}%`).join(' · ')
-  }
-  if (quota.balanceText || quota.windows.some(window => window.kind === 'balance')) return '余额 / 积分'
   if (quota.windows.length && quota.windows.every(window => window.kind === 'unlimited')) return '不限量'
-  return quota.windows.length ? '查看额度' : '暂无额度读数'
+  const resets: { at: number; window: AggregatedWindow }[] = []
+  const expiries: { at: number; window: AggregatedWindow }[] = []
+  const permanent: AggregatedWindow[] = []
+  let balanceWindow: AggregatedWindow | undefined
+  let hasText = false
+  for (const window of quota.windows) {
+    if (window.kind === 'unlimited') continue
+    if (window.kind === 'balance') { balanceWindow ??= window; continue }
+    if (window.kind !== 'percentage') { hasText = true; continue }
+    const reset = effectiveReset(window)
+    if (reset !== undefined) { resets.push({ at: reset, window }); continue }
+    if (validTime(window.runsOutAt)) { expiries.push({ at: window.runsOutAt!, window }); continue }
+    permanent.push(window)
+  }
+  const parts = resets.sort((a, b) => a.at - b.at)
+    .map(({ at, window }) => `${countdownLabel(at, now)}R ${Math.round(share(window) ?? 0)}%`)
+    .concat(expiries.sort((a, b) => a.at - b.at)
+      .map(({ at, window }) => `${countdownLabel(at, now)}L ${Math.round(share(window) ?? 0)}%`))
+  const merged = permanentLabel(permanent)
+  if (merged) parts.push(merged)
+  const balance = quota.balanceText ? compactBalance(quota.balanceText)
+    : balanceWindow && finite(balanceWindow.amount)
+      ? `${compactCount(balanceWindow.amount)}${balanceWindow.unit ? ` ${balanceWindow.unit}` : ''}` : undefined
+  if (balance) parts.push(balance)
+  if (!parts.length) return hasText || quota.balanceText ? '查看额度' : '暂无额度读数'
+  return parts.join(' · ')
 }
 export function resetLabel(at: number | undefined, now = Date.now()): string | undefined {
   if (at === undefined || !Number.isFinite(at)) return undefined

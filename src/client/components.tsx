@@ -1,4 +1,5 @@
 import { MAGPIE_PATH } from './icon.ts'
+import { PROVIDER_ICONS } from './provider-icons.ts'
 import { useEffect, useId, useState, useSyncExternalStore } from 'react'
 import type { FormEvent } from 'react'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
@@ -11,6 +12,17 @@ export interface Injected { client: MagpieClient; open: () => void }
 export function MagpieIcon({ size = 18 }: { size?: number }) {
   // Original Magpie small-size silhouette, MIT © 2026 yetone; see THIRD-PARTY-NOTICES.
   return <svg width={size} height={size} viewBox="0 0 44 44" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d={MAGPIE_PATH} /></svg>
+}
+export function ProviderIcon({ upstream, size = 13 }: { upstream: string; size?: number }) {
+  // Vendor logo when Magpie ships one (keys are Magpie's own icon file names);
+  // the monochrome magpie mark degrades for everything unmatched.
+  const candidates = [upstream, `${upstream}-color`]
+  const bare = upstream.replace(/-cn$/i, '')
+  if (bare !== upstream) candidates.push(bare, `${bare}-color`)
+  candidates.push(`app-${upstream}`)
+  const icon = candidates.map(key => PROVIDER_ICONS[key]).find(Boolean)
+  if (!icon) return <MagpieIcon size={size} />
+  return <img src={icon} width={size} height={size} alt="" aria-hidden="true" className="mp-provider-icon" />
 }
 function useClient(client: MagpieClient) {
   const snapshot = useSyncExternalStore(client.subscribe, client.getSnapshot, client.getSnapshot)

@@ -6,7 +6,7 @@ import type { ModelSelectionSource } from './model-selection.ts'
 import { selectedMagpieGroup } from './model-selection.ts'
 import { aggregateQuota, aggregateWindowValue, quotaHeadline, resetLabel } from './quota-display.ts'
 import type { AggregatedWindow } from './quota-display.ts'
-import { MagpieIcon } from './components.tsx'
+import { MagpieIcon, ProviderIcon } from './components.tsx'
 
 export interface ModelQuotaDockProps { client: MagpieClient; selection: ModelSelectionSource }
 export function ModelQuotaDock({ client, selection }: ModelQuotaDockProps) {
@@ -85,7 +85,7 @@ export function ModelQuotaDock({ client, selection }: ModelQuotaDockProps) {
   const headline = !quota ? '读取额度…' : quota.error && !provider ? '额度暂不可用' : quotaHeadline(provider, clock)
   const close = () => { setOpenKey(null); trigger.current?.focus() }
   return <span className="dsh-magpie mp-model-quota">
-    <button ref={trigger} type="button" className="mp-quota-pill" aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} title="合并额度；倒计时为最短周期内的下一次重置，百分比为该窗口的合计或等权平均值" onClick={() => { setPosition({ visibility: 'hidden' }); setOpenKey(open ? null : key); if (!open) void client.quotas() }}><MagpieIcon size={13} /><span>{group.name.replace(/^Magpie\s*[·・—-]\s*/i, '')} · {headline}{stale ? ' · 缓存' : ''}</span></button>
+    <button ref={trigger} type="button" className="mp-quota-pill" aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} title="合并额度；时间为距重置(R)或到期(L)的向上进位倒计时，取最大两个单位；百分比为该窗口的合计或加权平均值" onClick={() => { setPosition({ visibility: 'hidden' }); setOpenKey(open ? null : key); if (!open) void client.quotas() }}><ProviderIcon upstream={group.upstream} size={13} /><span>{headline}{stale ? ' · 缓存' : ''}</span></button>
     {open && createPortal(<div ref={panel} id={id} className="dsh-magpie mp-quota-dialog" role="dialog" aria-modal="false" aria-labelledby={`${id}-title`} tabIndex={-1} style={position}>
       <div className="mp-quota-title"><span id={`${id}-title`}><MagpieIcon size={15} />{group.name}</span><button type="button" onClick={close} aria-label="关闭额度弹窗">关闭</button></div>
       <div className="mp-quota-model">{model.model}</div>

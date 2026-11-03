@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { QuotaAccountView, QuotaProviderView, QuotaWindowView } from '../src/contracts.ts'
-import { aggregateQuota, aggregateWindowValue, isModelQuotaWindow, quotaHeadline, quotaPeriod, resetLabel, windowValue } from '../src/client/quota-display.ts'
+import { aggregateQuota, aggregateWindowValue, compactBalance, compactCount, countdownLabel, isModelQuotaWindow, quotaHeadline, resetLabel, windowValue } from '../src/client/quota-display.ts'
 const account = (windows: QuotaWindowView[], patch: Partial<QuotaAccountView> = {}): QuotaAccountView => ({ id:'account-1',label:'账号1',kind:'subscription',unavailable:false,stale:false,windows,...patch })
 const provider = (...accounts: QuotaAccountView[]): QuotaProviderView => ({provider:'p',label:'P',accounts})
 
@@ -13,7 +13,7 @@ test('same-window percentages are averaged, unlike windows never mix, and compac
  assert.equal(q.windows[0]!.contributors,2)
  assert.equal(q.windows[0]!.aggregation,'mean')
  assert.equal(q.windows[1]!.remaining,60)
- assert.equal(quotaHeadline(p),'5h 40% · 1w 60%')
+ assert.equal(quotaHeadline(p),'50%')
  assert.equal(aggregateWindowValue(q.windows[0]!),'平均剩余 40%')
  assert.ok(!quotaHeadline(p).includes('–'))
 })
@@ -23,7 +23,7 @@ test('sum known used counts and totals before deriving remaining; never average 
  assert.equal(q.windows[0]!.amount,200);assert.equal(q.windows[0]!.limit,400)
  assert.equal(q.windows[0]!.remaining,50)
  assert.equal(aggregateWindowValue(q.windows[0]!),'200 / 400 积分 已用')
- assert.equal(quotaHeadline(provider(account([{kind:'percentage',label:'Monthly',amount:20,limit:100}]))),'1m 80%')
+ assert.equal(quotaHeadline(provider(account([{kind:'percentage',label:'Monthly',amount:20,limit:100}]))),'20/100')
 })
 test('mixed count and percent-only readings use equal-weight percent mean and do not invent total counts',()=>{
  const q=aggregateQuota(provider(account([{kind:'percentage',label:'5h',amount:20,limit:100}]),account([{kind:'percentage',label:'5h',remaining:40}])))
@@ -80,30 +80,52 @@ test('invalid metrics never emit nonfinite output; known zero remains a real rea
  assert.equal(q.windows.length,1);assert.equal(q.windows[0]!.remaining,0)
  assert.ok(!JSON.stringify(q).includes('null'))
 })
-test('compact cycle names normalize known periods without guessing unknown labels',()=>{
- for(const name of ['5h','5 小时','5 hours'])assert.deepEqual(quotaPeriod(name),{label:'5h',minutes:300})
- for(const name of ['7 天','weekly','week','1w'])assert.deepEqual(quotaPeriod(name),{label:'1w',minutes:10080})
- for(const name of ['monthly','month','月','30天','1m'])assert.deepEqual(quotaPeriod(name),{label:'1m',minutes:43200})
- assert.equal(quotaPeriod('Gemini Pro').minutes,undefined)
- for(const name of ['夜间流量','夜间','Night traffic','Nightly','GLM-5.3-Flash-Trial · ZCODE GLOBAL BUILD'])assert.deepEqual(quotaPeriod(name),{label:'夜间'})
- // WorkBuddy: redundant leading noun dropped, remaining names shortened.
- assert.deepEqual(quotaPeriod('Credits'),{label:''})
- assert.deepEqual(quotaPeriod('Extra credits'),{label:'Extra'})
- assert.deepEqual(quotaPeriod('Free model tokens'),{label:'Free'})
+test('countdown keeps the two largest units and ceils upward whenever a remainder exists',()=>{
+ const min=(n:number)=>n*60_000
+ assert.equal(countdownLabel(1000,0),'1m');assert.equal(countdownLabel(0,0),'0m');assert.equal(countdownLabel(-1,0),'0m')
+ assert.equal(countdownLabel(min(0.5),0),'1m');assert.equal(countdownLabel(min(42),0),'42m')
+ assert.equal(countdownLabel(min(60),0),'1h0m');assert.equal(countdownLabel(min(61),0),'1h1m')
+ assert.equal(countdownLabel(min(121),0),'2h1m');assert.equal(countdownLabel(min(1439),0),'23h59m')
+ assert.equal(countdownLabel(min(1440),0),'1d0h');assert.equal(countdownLabel(min(1559),0),'1d2h')
+ assert.equal(countdownLabel(min(2880),0),'2d0h');assert.equal(countdownLabel(min(2881),0),'2d1h')
+ assert.equal(countdownLabel(min(2879),0),'2d0h')
+ assert.equal(countdownLabel(min(39133),0),'27d5h');assert.equal(countdownLabel(min(39121),0),'27d5h');assert.equal(countdownLabel(min(39120),0),'27d4h');assert.equal(countdownLabel(min(39119),0),'27d4h')
 })
-test('WorkBuddy compact badge drops the Credits noun and shortens Extra/Free labels',()=>{
- const p=provider(account([{kind:'percentage',label:'Credits',remaining:93},{kind:'percentage',label:'Extra credits',remaining:100},{kind:'percentage',label:'Free model tokens',remaining:86}]))
- assert.equal(quotaHeadline(p),'93% · Extra 100% · Free 86%')
+test('compact counts abbreviate magnitudes and balances keep their unit',()=>{
+ assert.equal(compactCount(62440.54),'62.4k');assert.equal(compactCount(900),'900');assert.equal(compactCount(1000),'1k')
+ assert.equal(compactCount(46668736),'46.7M');assert.equal(compactCount(987),'987');assert.equal(compactCount(12.5),'12.5');assert.equal(compactCount(0.47),'0.47')
+ assert.equal(compactBalance('62440.54 credits'),'62.4k credits');assert.equal(compactBalance('12.5 credits'),'12.5 credits')
+ assert.equal(compactBalance('1,234 tokens'),'1.23k tokens');assert.equal(compactBalance('上游仅提供余额文本，无法可靠合计'),undefined)
 })
-test('compact countdown selects shortest recognized period, then earliest member reset, never the whole pool reset',()=>{
+test('reset windows sort earliest first, expiry follows, and renamed free-token labels never leak into the pill',()=>{
+ const now=1_000_000
+ const min=(n:number)=>n*60_000
+ const p=provider(account([
+  {kind:'percentage',label:'Credits',remaining:91,amount:268.55,limit:3000,resetsAt:now+27*1440*min(1)},
+  {kind:'percentage',label:'Extra credits',remaining:100,runsOutAt:now+2.5*1440*min(1)},
+  {kind:'percentage',label:'deepseek-v4.1-flash tokens (est.)',remaining:88,resetsAt:now+22*60*min(1)}]))
+ assert.equal(quotaHeadline(p,now),'22h0mR 88% · 27d0hR 91% · 2d12hL 100%')
+ assert.equal(quotaHeadline(provider(account([{kind:'percentage',label:'5h',remaining:0,resetsAt:now-1}])),now),'0mR 0%')
+ const codex=provider(account([{kind:'percentage',label:'7 days',remaining:26,resetsAt:now+172_860_000}],{balance:'62440.54 credits'}))
+ assert.equal(quotaHeadline(codex,now),'2d1hR 26% · 62.4k credits')
+})
+test('permanent windows merge into one limit-weighted figure or a summed amount pair, balance-only shows the balance',()=>{
+ const now=1_000_000
+ const weighted=provider(account([{kind:'percentage',label:'Total credits',remaining:93,limit:500},{kind:'percentage',label:'Add-on credits',remaining:100,limit:200}]))
+ assert.equal(quotaHeadline(weighted,now),'95%')
+ const summed=provider(account([{kind:'percentage',label:'A',amount:900,limit:1000},{kind:'percentage',label:'B',amount:0,limit:400}]))
+ assert.equal(quotaHeadline(summed,now),'0.9k/1.4k')
+ assert.equal(quotaHeadline(provider(account([],{balance:'62440.54 credits'}))),'62.4k credits')
+ assert.equal(quotaHeadline(provider(account([],{balance:'weird'}))),'查看额度')
+})
+test('countdown selects each window own reset and never the whole pool reset',()=>{
  const now=1000000
  const q=provider(account([{kind:'percentage',label:'7 天',remaining:80,resetsAt:now+60000},{kind:'percentage',label:'5 小时',remaining:20,resetsAt:now+8100000}]),account([{kind:'percentage',label:'7 天',remaining:60,resetsAt:now+60000},{kind:'percentage',label:'5 小时',remaining:60,resetsAt:now+9000000}]))
- assert.equal(quotaHeadline(q,now),'2h15m | 5h 40% · 1w 70%')
+ assert.equal(quotaHeadline(q,now),'1mR 70% · 2h15mR 40%')
  const five=aggregateQuota(q).windows.find(w=>w.label==='5 小时')!
  assert.equal(five.resetsAt,undefined);assert.equal(five.resetVaries,true);assert.equal(five.nextResetAt,now+8100000)
- assert.equal(quotaHeadline(provider(account([{kind:'percentage',label:'5h',remaining:0,resetsAt:now-1}])),now),'0m | 5h 0%')
- assert.equal(quotaHeadline(provider(account([{kind:'percentage',label:'Mystery',remaining:50,resetsAt:now+60000}])),now),'Mystery 50%')
- assert.equal(quotaHeadline(provider(account([{kind:'percentage',label:'GLM-5.3-Flash-Trial · ZCODE GLOBAL BUILD',remaining:92}])),now),'夜间 92%')
+ assert.equal(quotaHeadline(provider(account([{kind:'percentage',label:'Mystery',remaining:50,resetsAt:now+60000}])),now),'1mR 50%')
+ assert.equal(quotaHeadline(provider(account([{kind:'percentage',label:'GLM-5.3-Flash-Trial · ZCODE GLOBAL BUILD',remaining:92}]))),'92%')
 })
 test('model display omits tool MCP search browser and ancillary quotas without changing inference cycles',()=>{
  for(const label of ['MCP · Month','MCP calls','工具调用','Web Search','browser credits','Code completions','每日签到','Image generation','视频生成'])assert.equal(isModelQuotaWindow({kind:'percentage',label}),false,label)
@@ -111,7 +133,7 @@ test('model display omits tool MCP search browser and ancillary quotas without c
  assert.equal(isModelQuotaWindow({kind:'percentage',label:'Month',pool:'MCP'}),false)
  const p=provider(account([{kind:'percentage',label:'5h',remaining:60},{kind:'percentage',label:'MCP · Month',remaining:99},{kind:'balance',label:'Search',amount:1000},{kind:'text',label:'每日签到',display:'已领取'}]))
  assert.deepEqual(aggregateQuota(p).windows.map(w=>w.label),['5h'])
- assert.equal(quotaHeadline(p),'5h 60%')
+ assert.equal(quotaHeadline(p),'60%')
  const tools=provider(account([{kind:'percentage',label:'MCP · Month',remaining:100}],{balance:'100 tool credits'}))
  assert.equal(quotaHeadline(tools),'暂无额度读数');assert.equal(aggregateQuota(tools).balanceText,undefined)
 })
