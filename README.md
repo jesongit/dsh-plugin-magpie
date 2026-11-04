@@ -79,6 +79,10 @@ dsh plugin --profile desktop add link:<仓库绝对路径>
 
 ## 更新日志
 
+### 0.2.5
+
+- 尝试了设置页内置「更新 Magpie」（SSH/本机一键拉镜像重建容器），经实测在 Compose 变量插值与远程执行细节上不够可靠，**该功能已整体移除**；Magpie 更新请按官方文档在部署机上执行（`docker compose pull && docker compose up -d`）。保留的改动：RPC 层本地校验错误（ConnectorError）原样透传到 UI，不再被通用文案掩盖。
+
 ### 0.2.4
 
 - 额度入口图标化：pill 不再显示供应商文字名，改用从 Magpie 内嵌的全量供应商 logo（`scripts/generate-provider-icons.mjs` 生成，193 个），匹配不到的回落喜鹊单色图标；以后新增供应商只要 Magpie 已有 logo 就无需改插件。

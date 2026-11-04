@@ -45,7 +45,9 @@ export const css = `
 .dsh-magpie .mp-danger{color:var(--dsw-alias-state-error-primary)}
 .dsh-magpie-dock{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .dsh-magpie .mp-pill{border:0;border-radius:999px;min-height:24px;padding:3px 8px;font-size:12px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1)}
-.dsh-magpie.mp-model-quota{display:inline-flex;min-width:0;max-width:100%}
+/* The dock renders slot occupants before the shell's own context meter; this
+   order lifts the pill after the meter without touching host elements. */
+.dsh-magpie.mp-model-quota{display:inline-flex;min-width:0;max-width:100%;order:2}
 .dsh-magpie button.mp-quota-pill{display:inline-flex;align-items:center;gap:4px;font-size:calc(var(--dsh-content-font-size-secondary,13px) - 1px);line-height:20px;font-variant-numeric:tabular-nums;border:0;border-radius:999px;background:transparent;min-height:24px;padding:1px 8px;color:var(--dsw-alias-label-secondary);max-width:100%;white-space:nowrap}
 .dsh-magpie .mp-quota-pill img.mp-provider-icon{border-radius:3px;object-fit:contain;flex-shrink:0}
 .dsh-magpie .mp-quota-pill span{overflow:hidden;text-overflow:ellipsis;min-width:0}

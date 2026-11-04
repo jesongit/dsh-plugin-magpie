@@ -4,6 +4,7 @@ import type { ConnectInput } from './contracts.ts'
 import type { MagpieService } from './service.ts'
 import type { SpeedStore } from './speed-store.ts'
 import { LaunchTickets } from './launch.ts'
+import { ConnectorError } from './transport.ts'
 
 export interface SpeedView { tier: 'standard' | 'fast'; visible: boolean }
 function sessionId(payload: unknown): string {
@@ -90,9 +91,14 @@ export function registerRpc(ctx: Context, service: MagpieService, speeds?: Speed
         if (!body || body.type !== 'client-request' || typeof body.rpcId !== 'string' || body.method !== `magpie.${endpoint}`) return new Response(null, { status: 400, headers: { 'Cache-Control': 'no-store' } })
         let result: unknown
         try { result = { ok: true, value: await dispatch(service, endpoint, body.payload, request.signal, tickets, speeds) } }
-        catch {
+        catch (error) {
           // Never echo upstream request errors, typed secrets, URLs or cookie contents.
-          result = { ok: false, error: { code: 'magpie/operation-failed', message: endpoint.startsWith('launch.') ? 'Magpie 后台启动未完成，请检查连接设置后重试。' : service.status().error ?? 'Magpie 操作未完成，请检查连接设置后重试。', details: {} } }
+          // ConnectorError is locally authored with controlled text (validation
+          // messages, sanitized failures), so it is safe to relay verbatim.
+          const message = error instanceof ConnectorError ? error.message
+            : endpoint.startsWith('launch.') ? 'Magpie 后台启动未完成，请检查连接设置后重试。'
+            : service.status().error ?? 'Magpie 操作未完成，请检查连接设置后重试。'
+          result = { ok: false, error: { code: 'magpie/operation-failed', message, details: {} } }
         }
         return Response.json({ type: 'server-response', rpcId: body.rpcId, result }, { headers: { 'Cache-Control': 'no-store' } })
       }
