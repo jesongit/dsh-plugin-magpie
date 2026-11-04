@@ -40,6 +40,39 @@ export async function abortable<T>(pending: Promise<T>, signal?: AbortSignal): P
   } finally { signal.removeEventListener('abort', listener) }
 }
 
+/**
+ * Rewrite a tool's JSON Schema into the standard shape strict upstreams demand.
+ * Some tool registries mark a property required with a boolean `required: true`
+ * inside the property instead of naming it in the object-level `required` array
+ * (JSON Schema expects an array of names). ZCode and other strict providers
+ * reject the whole request for it, so hoist every boolean `required` into its
+ * parent's `required` name list and drop it. Returns a fresh object; a standard
+ * schema comes back unchanged and the caller's schema is never mutated.
+ */
+export function normalizeToolSchema(schema: ObjectValue): ObjectValue {
+  const walk = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(walk)
+    if (node === null || typeof node !== 'object') return node
+    const src = node as ObjectValue
+    const out: ObjectValue = {}
+    for (const [key, value] of Object.entries(src)) {
+      if (key === 'required' && typeof value === 'boolean') continue
+      out[key] = walk(value)
+    }
+    const props = src.properties
+    if (props !== null && typeof props === 'object' && !Array.isArray(props)) {
+      const names = new Set<string>()
+      if (Array.isArray(src.required)) for (const name of src.required) if (typeof name === 'string') names.add(name)
+      for (const [name, prop] of Object.entries(props as ObjectValue)) {
+        if (prop !== null && typeof prop === 'object' && !Array.isArray(prop) && (prop as ObjectValue).required === true) names.add(name)
+      }
+      if (names.size) out.required = [...names]
+    }
+    return out
+  }
+  return walk(schema) as ObjectValue
+}
+
 /** Serialize all history including raw tool arguments; files are handles, never uploaded. */
 export async function chatRequest(options: GenerateOptions, model: CatalogModel, attachments?: AttachmentStore): Promise<ObjectValue> {
   const effort = effectiveEffort(options, model)
@@ -96,7 +129,7 @@ export async function chatRequest(options: GenerateOptions, model: CatalogModel,
   return {
     model: model.id, messages, stream: true, stream_options: { include_usage: true },
     ...(projected.tools?.length ? { tools: projected.tools.map(tool => ({ type: 'function', function: {
-      name: tool.name, description: tool.description, parameters: tool.parameters,
+      name: tool.name, description: tool.description, parameters: normalizeToolSchema(tool.parameters),
     } })) } : {}),
     ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
     ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : model.maxTokens !== undefined ? { max_tokens: model.maxTokens } : {}),

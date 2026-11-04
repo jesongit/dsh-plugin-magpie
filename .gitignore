@@ -6,3 +6,5 @@ lib-test/
 .verification/
 .env
 .env.*
+
+magpie/

@@ -7,7 +7,7 @@ import {
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { AttachmentStore, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { MagpieAdapter } from '../src/adapter.ts'
-import { chatChunks, chatRequest, chatUsage, sseData } from '../src/protocol.ts'
+import { chatChunks, chatRequest, chatUsage, normalizeToolSchema, sseData } from '../src/protocol.ts'
 import type { CallTarget, CatalogGroup, CatalogModel } from '../src/contracts.ts'
 
 const model: CatalogModel = { id: 'workbuddy/claude-test', name: 'Test', contextWindow: 10000, maxTokens: 1000,
@@ -86,6 +86,35 @@ test('serializes system, developer, tools, raw arguments, tool errors and reason
   assert.deepEqual(body.tools, [{ type: 'function', function: { name: 'read', description: 'Read', parameters: { type: 'object' } } }])
   assert.equal(body.temperature, 0); assert.equal(body.max_tokens, 23); assert.deepEqual(body.stop, ['END'])
   assert.equal(body.reasoning_effort, 'high')
+})
+
+test('hoists non-standard boolean required in tool schemas without touching the caller', async () => {
+  const parameters = { type: 'object', properties: {
+    project_id: { type: 'string', required: true },
+    optional: { type: 'string', required: false },
+    grades: { type: 'array', required: true, items: { type: 'object', properties: {
+      score: { type: 'number', required: true }, comment: { type: 'string' },
+    } } },
+  } }
+  const input: GenerateOptions = { ...options(), tools: [
+    { name: 'study_like', description: 'Study', parameters },
+    { name: 'clean', description: 'Clean', parameters: { type: 'object', properties: { a: { type: 'string' } }, required: ['a'] } },
+  ] }
+  const body = await chatRequest(input, model)
+  const tools = body.tools as { function: { parameters: Record<string, unknown> } }[]
+  // Boolean `required: true` becomes a name in the object-level array; false is dropped.
+  assert.deepEqual(tools[0]?.function.parameters, { type: 'object', properties: {
+    project_id: { type: 'string' },
+    optional: { type: 'string' },
+    grades: { type: 'array', items: { type: 'object', properties: { score: { type: 'number' }, comment: { type: 'string' } }, required: ['score'] } },
+  }, required: ['project_id', 'grades'] })
+  // A well-formed schema is passed through unchanged.
+  assert.deepEqual(tools[1]?.function.parameters, { type: 'object', properties: { a: { type: 'string' } }, required: ['a'] })
+  // The caller's schema is left untouched (fresh object out).
+  assert.deepEqual(parameters.properties.project_id, { type: 'string', required: true })
+  const wellFormed = { type: 'object', properties: { x: { type: 'string' } }, required: ['x'] }
+  assert.deepEqual(normalizeToolSchema(wellFormed), wellFormed)
+  assert.notEqual(normalizeToolSchema(wellFormed), wellFormed)
 })
 
 const image = { attachmentId: 'image-id', mediaType: 'image/png', bytes: 3, width: 2, height: 2, name: 'plot.png' } as ImageAttachmentRef
